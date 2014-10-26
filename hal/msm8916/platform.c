@@ -115,6 +115,8 @@ typedef int (*acdb_reload_vocvoltable_t)(int);
 typedef int (*acdb_loader_get_calibration_t)(char *attr, int size, void *data);
 acdb_loader_get_calibration_t acdb_loader_get_calibration;
 
+#define AUDIO_PARAMETER_KEY_REC_PLAY_CONC "rec_play_conc_on"
+
 struct platform_data {
     struct audio_device *adev;
     bool fluence_in_spkr_mode;
@@ -132,6 +134,9 @@ struct platform_data {
     acdb_send_audio_cal_t      acdb_send_audio_cal;
     acdb_send_voice_cal_t      acdb_send_voice_cal;
     acdb_reload_vocvoltable_t  acdb_reload_vocvoltable;
+#ifdef RECORD_PLAY_CONCURRENCY
+    bool rec_play_conc_set;
+#endif
     void *hw_info;
     char ec_ref_mixer_path[64];
     bool speaker_lr_swap;
@@ -207,6 +212,11 @@ static const char * const device_table[SND_DEVICE_MAX] = {
     [SND_DEVICE_OUT_SPEAKER_AND_USB_HEADSET] = "speaker-and-usb-headphones",
     [SND_DEVICE_OUT_SPEAKER_PROTECTED] = "speaker-protected",
     [SND_DEVICE_OUT_VOICE_SPEAKER_PROTECTED] = "voice-speaker-protected",
+#ifdef RECORD_PLAY_CONCURRENCY
+    [SND_DEVICE_OUT_VOIP_HANDSET] = "voip-handset",
+    [SND_DEVICE_OUT_VOIP_SPEAKER] = "voip-speaker",
+    [SND_DEVICE_OUT_VOIP_HEADPHONES] = "voip-headphones",
+#endif
 
     /* Capture sound devices */
     [SND_DEVICE_IN_HANDSET_MIC] = "handset-mic",
@@ -295,6 +305,11 @@ static int acdb_device_table[SND_DEVICE_MAX] = {
     [SND_DEVICE_OUT_SPEAKER_PROTECTED] = 124,
     [SND_DEVICE_OUT_VOICE_SPEAKER_PROTECTED] = 101,
     [SND_DEVICE_OUT_VOICE_SPEAKER_HFP] = 14,
+#ifdef RECORD_PLAY_CONCURRENCY
+    [SND_DEVICE_OUT_VOIP_HANDSET] = 133,
+    [SND_DEVICE_OUT_VOIP_SPEAKER] = 132,
+    [SND_DEVICE_OUT_VOIP_HEADPHONES] = 134,
+#endif
 
     [SND_DEVICE_IN_HANDSET_MIC] = 4,
     [SND_DEVICE_IN_HANDSET_MIC_EXTERNAL] = 4,
@@ -388,6 +403,11 @@ static struct name_to_index snd_device_name_index[SND_DEVICE_MAX] = {
     {TO_NAME_INDEX(SND_DEVICE_OUT_SPEAKER_AND_USB_HEADSET)},
     {TO_NAME_INDEX(SND_DEVICE_OUT_SPEAKER_PROTECTED)},
     {TO_NAME_INDEX(SND_DEVICE_OUT_VOICE_SPEAKER_PROTECTED)},
+#ifdef RECORD_PLAY_CONCURRENCY
+    {TO_NAME_INDEX(SND_DEVICE_OUT_VOIP_HANDSET)},
+    {TO_NAME_INDEX(SND_DEVICE_OUT_VOIP_SPEAKER)},
+    {TO_NAME_INDEX(SND_DEVICE_OUT_VOIP_HEADPHONES)},
+#endif
     {TO_NAME_INDEX(SND_DEVICE_IN_HANDSET_MIC)},
     {TO_NAME_INDEX(SND_DEVICE_IN_HANDSET_MIC_EXTERNAL)},
     {TO_NAME_INDEX(SND_DEVICE_IN_HANDSET_MIC_AEC)},
@@ -1462,6 +1482,18 @@ snd_device_t platform_get_output_snd_device(void *platform, audio_devices_t devi
     struct audio_device *adev = my_data->adev;
     audio_mode_t mode = adev->mode;
     snd_device_t snd_device = SND_DEVICE_NONE;
+#ifdef RECORD_PLAY_CONCURRENCY
+    bool use_voip_out_devices = false;
+    bool prop_rec_play_enabled = false;
+    char recConcPropValue[PROPERTY_VALUE_MAX];
+
+    if (property_get("rec.playback.conc.disabled", recConcPropValue, NULL)) {
+        prop_rec_play_enabled = atoi(recConcPropValue) || !strncmp("true", recConcPropValue, 4);
+    }
+    use_voip_out_devices =  prop_rec_play_enabled &&
+                        (my_data->rec_play_conc_set || adev->mode == AUDIO_MODE_IN_COMMUNICATION);
+    ALOGV("platform_get_output_snd_device use_voip_out_devices : %d",use_voip_out_devices);
+#endif
 
     audio_channel_mask_t channel_mask = (adev->active_input == NULL) ?
                                 AUDIO_CHANNEL_IN_MONO : adev->active_input->channel_mask;
@@ -1553,14 +1585,26 @@ snd_device_t platform_get_output_snd_device(void *platform, audio_devices_t devi
 
     if (devices & AUDIO_DEVICE_OUT_WIRED_HEADPHONE ||
         devices & AUDIO_DEVICE_OUT_WIRED_HEADSET) {
+#ifdef RECORD_PLAY_CONCURRENCY
+            if (use_voip_out_devices)
+                snd_device = SND_DEVICE_OUT_VOIP_HEADPHONES;
+            else
+#endif
                 snd_device = SND_DEVICE_OUT_HEADPHONES;
     } else if (devices & AUDIO_DEVICE_OUT_LINE) {
         snd_device = SND_DEVICE_OUT_LINE;
     } else if (devices & AUDIO_DEVICE_OUT_SPEAKER) {
+#ifdef RECORD_PLAY_CONCURRENCY
+        if (use_voip_out_devices) {
+            snd_device = SND_DEVICE_OUT_VOIP_SPEAKER;
+        } else
+#endif
+        {
         if (my_data->speaker_lr_swap)
             snd_device = SND_DEVICE_OUT_SPEAKER_REVERSE;
         else
             snd_device = SND_DEVICE_OUT_SPEAKER;
+        }
     } else if (devices & AUDIO_DEVICE_OUT_ALL_SCO) {
         if (adev->bt_wb_speech_enabled)
             snd_device = SND_DEVICE_OUT_BT_SCO_WB;
@@ -1572,7 +1616,12 @@ snd_device_t platform_get_output_snd_device(void *platform, audio_devices_t devi
                devices & AUDIO_DEVICE_OUT_DGTL_DOCK_HEADSET) {
         snd_device = SND_DEVICE_OUT_USB_HEADSET;
     } else if (devices & AUDIO_DEVICE_OUT_EARPIECE) {
-        snd_device = SND_DEVICE_OUT_HANDSET;
+#ifdef RECORD_PLAY_CONCURRENCY
+        if (use_voip_out_devices)
+            snd_device = SND_DEVICE_OUT_VOIP_HANDSET;
+        else
+#endif
+            snd_device = SND_DEVICE_OUT_HANDSET;
     } else {
         ALOGE("%s: Unknown device(s) %#x", __func__, devices);
     }
@@ -2041,6 +2090,20 @@ int platform_set_parameters(void *platform, struct str_parms *parms)
 
     audio_extn_hfp_set_parameters(my_data->adev, parms);
 done:
+
+#ifdef RECORD_PLAY_CONCURRENCY
+    err = str_parms_get_str(parms, AUDIO_PARAMETER_KEY_REC_PLAY_CONC, value, sizeof(value));
+    if (err >= 0) {
+        if (!strncmp("true", value, sizeof("true"))) {
+            ALOGD("setting record playback concurrency to true");
+            my_data->rec_play_conc_set = true;
+        } else {
+            ALOGD("setting record playback concurrency to false");
+            my_data->rec_play_conc_set = false;
+        }
+        str_parms_del(parms, AUDIO_PARAMETER_KEY_REC_PLAY_CONC);
+    }
+#endif
     ALOGV("%s: exit with code(%d)", __func__, ret);
     if (kv_pairs != NULL)
         free(kv_pairs);
