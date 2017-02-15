@@ -47,6 +47,8 @@ static void update_hardware_info_8x16(struct hardware_info *hw_info, const char 
     } else if (!strcmp(snd_card_name, "msm8909-snd-card") ||
                !strcmp(snd_card_name, "msm8909-pm8916-snd-card")) {
         strlcpy(hw_info->name, "msm8909", sizeof(hw_info->name));
+    }  else if (!strcmp(snd_card_name, "msm8939-snd-card-mtp")) {
+        strlcpy(hw_info->name, "msm8939", sizeof(hw_info->name));
     }  else if (!strcmp(snd_card_name, "msm8952-snd-card") ||
                 !strcmp(snd_card_name, "msm8952-snd-card-mtp")) {
         strlcpy(hw_info->name, "msm8952", sizeof(hw_info->name));
@@ -55,7 +57,7 @@ static void update_hardware_info_8x16(struct hardware_info *hw_info, const char 
     }  else if (!strcmp(snd_card_name, "msm8976-tasha-snd-card")) {
         strlcpy(hw_info->name, "msm8976", sizeof(hw_info->name));
     } else {
-        ALOGW("%s: Not an  8x16/8909/8952 device", __func__);
+        ALOGW("%s: Not an  8x16/8909/8939/8952 device", __func__);
     }
 }
 
@@ -70,8 +72,9 @@ void *hw_info_init(const char *snd_card_name)
     }
 
     if (strstr(snd_card_name, "msm8x16") || strstr(snd_card_name, "msm8909")
-        || strstr(snd_card_name, "msm8952") || strstr(snd_card_name, "msm8976")) {
-        ALOGV("8x16 - variant soundcard");
+        || strstr(snd_card_name, "msm8952") || strstr(snd_card_name, "msm8976")
+	|| strstr(snd_card_name, "msm8939")) {
+	ALOGV("8x16 - variant soundcard");
 
         strlcpy(hw_info->type, "", sizeof(hw_info->type));
         strlcpy(hw_info->name, "", sizeof(hw_info->name));
